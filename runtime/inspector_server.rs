@@ -19,9 +19,9 @@ use deno_core::task::spawn;
 use deno_core::InspectorMsg;
 use deno_core::InspectorSessionProxy;
 use deno_core::JsRuntime;
-use fastwebsockets::Frame;
-use fastwebsockets::OpCode;
-use fastwebsockets::WebSocket;
+// use fastwebsockets::Frame;
+// use fastwebsockets::OpCode;
+// use fastwebsockets::WebSocket;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -118,73 +118,74 @@ fn handle_ws_request(
   req: http::Request<hyper::Body>,
   inspector_map_rc: Rc<RefCell<HashMap<Uuid, InspectorInfo>>>,
 ) -> http::Result<http::Response<hyper::Body>> {
-  let (parts, body) = req.into_parts();
-  let req = http::Request::from_parts(parts, ());
+  panic!("out of order");
+  // let (parts, body) = req.into_parts();
+  // let req = http::Request::from_parts(parts, ());
 
-  let maybe_uuid = req
-    .uri()
-    .path()
-    .strip_prefix("/ws/")
-    .and_then(|s| Uuid::parse_str(s).ok());
+  // let maybe_uuid = req
+  //   .uri()
+  //   .path()
+  //   .strip_prefix("/ws/")
+  //   .and_then(|s| Uuid::parse_str(s).ok());
 
-  if maybe_uuid.is_none() {
-    return http::Response::builder()
-      .status(http::StatusCode::BAD_REQUEST)
-      .body("Malformed inspector UUID".into());
-  }
+  // if maybe_uuid.is_none() {
+  //   return http::Response::builder()
+  //     .status(http::StatusCode::BAD_REQUEST)
+  //     .body("Malformed inspector UUID".into());
+  // }
 
-  // run in a block to not hold borrow to `inspector_map` for too long
-  let new_session_tx = {
-    let inspector_map = inspector_map_rc.borrow();
-    let maybe_inspector_info = inspector_map.get(&maybe_uuid.unwrap());
+  // // run in a block to not hold borrow to `inspector_map` for too long
+  // let new_session_tx = {
+  //   let inspector_map = inspector_map_rc.borrow();
+  //   let maybe_inspector_info = inspector_map.get(&maybe_uuid.unwrap());
 
-    if maybe_inspector_info.is_none() {
-      return http::Response::builder()
-        .status(http::StatusCode::NOT_FOUND)
-        .body("Invalid inspector UUID".into());
-    }
+  //   if maybe_inspector_info.is_none() {
+  //     return http::Response::builder()
+  //       .status(http::StatusCode::NOT_FOUND)
+  //       .body("Invalid inspector UUID".into());
+  //   }
 
-    let info = maybe_inspector_info.unwrap();
-    info.new_session_tx.clone()
-  };
-  let (parts, _) = req.into_parts();
-  let mut req = http::Request::from_parts(parts, body);
+  //   let info = maybe_inspector_info.unwrap();
+  //   info.new_session_tx.clone()
+  // };
+  // let (parts, _) = req.into_parts();
+  // let mut req = http::Request::from_parts(parts, body);
 
-  let (resp, fut) = match fastwebsockets::upgrade::upgrade(&mut req) {
-    Ok(e) => e,
-    _ => {
-      return http::Response::builder()
-        .status(http::StatusCode::BAD_REQUEST)
-        .body("Not a valid Websocket Request".into());
-    }
-  };
+  // let (resp, fut) = match fastwebsockets::upgrade::upgrade(&mut req) {
+  //   Ok(e) => e,
+  //   _ => {
+  //     return http::Response::builder()
+  //       .status(http::StatusCode::BAD_REQUEST)
+  //       .body("Not a valid Websocket Request".into());
+  //   }
+  // };
 
-  // spawn a task that will wait for websocket connection and then pump messages between
-  // the socket and inspector proxy
-  spawn(async move {
-    let websocket = if let Ok(w) = fut.await {
-      w
-    } else {
-      eprintln!("Inspector server failed to upgrade to WS connection");
-      return;
-    };
+  // // spawn a task that will wait for websocket connection and then pump messages between
+  // // the socket and inspector proxy
+  // spawn(async move {
+  //   let websocket = if let Ok(w) = fut.await {
+  //     w
+  //   } else {
+  //     eprintln!("Inspector server failed to upgrade to WS connection");
+  //     return;
+  //   };
 
-    // The 'outbound' channel carries messages sent to the websocket.
-    let (outbound_tx, outbound_rx) = mpsc::unbounded();
-    // The 'inbound' channel carries messages received from the websocket.
-    let (inbound_tx, inbound_rx) = mpsc::unbounded();
+  //   // The 'outbound' channel carries messages sent to the websocket.
+  //   let (outbound_tx, outbound_rx) = mpsc::unbounded();
+  //   // The 'inbound' channel carries messages received from the websocket.
+  //   let (inbound_tx, inbound_rx) = mpsc::unbounded();
 
-    let inspector_session_proxy = InspectorSessionProxy {
-      tx: outbound_tx,
-      rx: inbound_rx,
-    };
+  //   let inspector_session_proxy = InspectorSessionProxy {
+  //     tx: outbound_tx,
+  //     rx: inbound_rx,
+  //   };
 
-    eprintln!("Debugger session started.");
-    let _ = new_session_tx.unbounded_send(inspector_session_proxy);
-    pump_websocket_messages(websocket, inbound_tx, outbound_rx).await;
-  });
+  //   eprintln!("Debugger session started.");
+  //   let _ = new_session_tx.unbounded_send(inspector_session_proxy);
+  //   pump_websocket_messages(websocket, inbound_tx, outbound_rx).await;
+  // });
 
-  Ok(resp)
+  // Ok(resp)
 }
 
 fn handle_json_request(
@@ -305,50 +306,51 @@ async fn server(
   }
 }
 
-/// The pump future takes care of forwarding messages between the websocket
-/// and channels. It resolves when either side disconnects, ignoring any
-/// errors.
-///
-/// The future proxies messages sent and received on a warp WebSocket
-/// to a UnboundedSender/UnboundedReceiver pair. We need these "unbounded" channel ends to sidestep
-/// Tokio's task budget, which causes issues when JsRuntimeInspector::poll_sessions()
-/// needs to block the thread because JavaScript execution is paused.
-///
-/// This works because UnboundedSender/UnboundedReceiver are implemented in the
-/// 'futures' crate, therefore they can't participate in Tokio's cooperative
-/// task yielding.
-async fn pump_websocket_messages(
-  mut websocket: WebSocket<hyper::upgrade::Upgraded>,
-  inbound_tx: UnboundedSender<String>,
-  mut outbound_rx: UnboundedReceiver<InspectorMsg>,
-) {
-  'pump: loop {
-    tokio::select! {
-        Some(msg) = outbound_rx.next() => {
-            let msg = Frame::text(msg.content.into_bytes());
-            let _ = websocket.write_frame(msg).await;
-        }
-        Ok(msg) = websocket.read_frame() => {
-            match msg.opcode {
-                OpCode::Text => {
-                    if let Ok(s) = String::from_utf8(msg.payload) {
-                      let _ = inbound_tx.unbounded_send(s);
-                    }
-                }
-                OpCode::Close => {
-                    // Users don't care if there was an error coming from debugger,
-                    // just about the fact that debugger did disconnect.
-                    eprintln!("Debugger session ended");
-                    break 'pump;
-                }
-                _ => {
-                    // Ignore other messages.
-                }
-            }
-        }
-    }
-  }
-}
+// /// The pump future takes care of forwarding messages between the websocket
+// /// and channels. It resolves when either side disconnects, ignoring any
+// /// errors.
+// ///
+// /// The future proxies messages sent and received on a warp WebSocket
+// /// to a UnboundedSender/UnboundedReceiver pair. We need these "unbounded" channel ends to sidestep
+// /// Tokio's task budget, which causes issues when JsRuntimeInspector::poll_sessions()
+// /// needs to block the thread because JavaScript execution is paused.
+// ///
+// /// This works because UnboundedSender/UnboundedReceiver are implemented in the
+// /// 'futures' crate, therefore they can't participate in Tokio's cooperative
+// /// task yielding.
+// async fn pump_websocket_messages(
+//   mut websocket: WebSocket<hyper::upgrade::Upgraded>,
+//   inbound_tx: UnboundedSender<String>,
+//   mut outbound_rx: UnboundedReceiver<InspectorMsg>,
+// ) {
+//   panic!("out of order");
+//   // 'pump: loop {
+//   //   tokio::select! {
+//   //       Some(msg) = outbound_rx.next() => {
+//   //           let msg = Frame::text(msg.content.into_bytes());
+//   //           let _ = websocket.write_frame(msg).await;
+//   //       }
+//   //       Ok(msg) = websocket.read_frame() => {
+//   //           match msg.opcode {
+//   //               OpCode::Text => {
+//   //                   if let Ok(s) = String::from_utf8(msg.payload) {
+//   //                     let _ = inbound_tx.unbounded_send(s);
+//   //                   }
+//   //               }
+//   //               OpCode::Close => {
+//   //                   // Users don't care if there was an error coming from debugger,
+//   //                   // just about the fact that debugger did disconnect.
+//   //                   eprintln!("Debugger session ended");
+//   //                   break 'pump;
+//   //               }
+//   //               _ => {
+//   //                   // Ignore other messages.
+//   //               }
+//   //           }
+//   //       }
+//   //   }
+//   // }
+// }
 
 /// Inspector information that is sent from the isolate thread to the server
 /// thread when a new inspector is created.
